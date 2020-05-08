@@ -1,5 +1,3 @@
-extern crate regex;
-
 use regex::Regex;
 
 // How do i print my structs and enums?
@@ -85,7 +83,10 @@ fn condition_token(line: usize, mut offset: usize, input: &str) -> Token {
     }
     offset -= 1;
 
-    identifier_token(line, offset, input)
+    return Token {
+        token_type: TokenType::Condition,
+        ..identifier_token(line, offset, input)
+    }
 }
 
 fn action_token(line: usize, offset: usize, input: &str) -> Token {
