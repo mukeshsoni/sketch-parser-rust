@@ -310,10 +310,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn it_works() {
-        // how to write multiline string literal? You just write it.
-        let input = "abc
+    static INPUT: &str = "abc
 % some comment
   def -> lmn
   pasta -> noodles %more comment
@@ -328,12 +325,20 @@ mod tests {
     -> ast; ifyes
     -> lastState; ifno";
 
+    static invalidInputStr: &str = "abc
+  def -> lmn
+      pqr
+    stm";
+
+    #[test]
+    fn it_works() {
+        // how to write multiline string literal? You just write it.
         // println! or print! does not work for successful tests. rust test
         // clears all stdout output from the program if the test passes.
         // 2 ways to check our println! statements
         // 1. Fail the test manually. E.g. assert_eq!(1, 0)
         // 2. use the --nocapture flag while running the tests
-        let tokens = tokenize(input);
+        let tokens = tokenize(INPUT);
 
         println!(
             "{:#?} {:#?}",
@@ -347,4 +352,18 @@ mod tests {
         //
         assert_eq!(tokens.len(), 39);
     }
+
+    #[test]
+    fn test_token_type() {
+        let tokens = tokenize(INPUT);
+
+        println!("First token {:?}", tokens[0]);
+        println!("token {:?}", tokens[21]);
+
+        assert_eq!(tokens[1].token_type, TokenType::Comment);
+        assert_eq!(tokens[2].token_type, TokenType::Indent);
+        assert_eq!(tokens[11].token_type, TokenType::Indent);
+        assert_eq!(tokens[21].token_type, TokenType::Dedent);
+    }
+
 }
