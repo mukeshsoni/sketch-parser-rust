@@ -125,17 +125,21 @@ fn is_identifier_start(c: char) -> bool {
     re.is_match(&c.to_string()[..])
 }
 
+// this is the key function in the tokenizer
+// because our language is indent based. Parsing it is very tricky.
+// This is the whole reason i had to write a tokenizer in a recursive descent 
+// parser.
+// This step in the tokenizer makes life much simpler for the parser.
 fn indent_dedent_tokens(
     line_number: usize,
     indent_stack: &mut Vec<usize>,
     line: &Vec<char>,
 ) -> (usize, Vec<Token>) {
-    let re = Regex::new(r" ").unwrap();
     let mut offset = 0;
     let mut current_indent_level: usize = 0;
     let mut tokens: Vec<Token> = Vec::new();
 
-    while re.is_match(&line[offset].to_string()[..]) {
+    while line[offset] == ' ' {
         current_indent_level += 1;
         offset += 1;
     }
@@ -153,11 +157,31 @@ fn indent_dedent_tokens(
                     indent_stack.push(current_indent_level);
                     tokens.push(token_without_text(line_number, 0, TokenType::Indent));
                 } else if prev_indent_level > current_indent_level {
-                    println!("indent stack {:?}", indent_stack);
+
+                    // TODO: we should implement some syntax error checking 
+                    // in this part. E.g. previous indent level is 2 and the 
+                    // current one is 6. It's too much.
+                    // Or the one below
+                    // const dedentLevelInStack = indentStack.find(
+                      // (n) => n === currentIndentLevel,
+                    // );
+
+                    // // any dedent/outdent must match some previous indentation level.
+                    // // otherwise it's a syntax error
+                    // if (dedentLevelInStack === undefined) {
+                      // throw new Error('Invalid indentation');
+                    // }
+
+
                     while indent_stack.len() > 0 {
                         let prev_indent = indent_stack.pop().unwrap();
+                        // keep popping indentation levels from indent dedentLevelInStack
+                        // until we reach the current indent level
+                        // push those many dedent tokens to tokenizer
                         if prev_indent > current_indent_level {
                             tokens.push(token_without_text(line_number, 0, TokenType::Dedent));
+                        } else {
+                            break;
                         }
                     }
                 }
@@ -177,11 +201,12 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     // that simple. `split` return an iterator and if we want the lines as
     // as vector or array, we have to use the collect method of the iterator
     // The syntax for collect gets weird when we want to tell it the type to
-    // be returned
+    // be returned.
+    // let lines =  input.split("\n").collect<Vec<&str>>();
+    // Or we can annotate the variable to which the value of
     // we can avoid specifying it in that weird way in collect by specifying
     // type of lines
-    // let lines: Vec<&str> = input.split("\n").collect();
-    let lines = input.split("\n").collect::<Vec<&str>>();
+    let lines: Vec<&str> = input.split("\n").collect();
     // How to create an empty vector?
     let mut tokens: Vec<Token> = Vec::new();
     // line and col keep track of the current line and col number
@@ -193,7 +218,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     // TODO: can we write it as input.split("\n").map().flatten().collect()?
     // The map function returns the list of tokens in one line
 
-    // writing for line in lines would mean moving lines inside the for block
+    // writing `for line in lines` would mean moving lines inside the for block
     // and hence not being available outside it
     for line in &lines {
         // how to convert a string into a list of characters? Use chars method
@@ -209,8 +234,12 @@ pub fn tokenize(input: &str) -> Vec<Token> {
             indent_dedent_tokens(line_number, &mut indent_stack, &char_vec);
         offset = new_offset;
 
+        // extend extends a collection with contents of an iterator
         tokens.extend(indent_tokens);
 
+        // why can we split the char_vec at offset and then iterate on the line
+        // from that point?
+        // Because on every loop the offset changes by more than or equal to 1
         while offset < char_vec.len() {
             let c = char_vec[offset];
             match c {
@@ -283,8 +312,6 @@ mod tests {
 
     #[test]
     fn it_works() {
-        assert_eq!(2 + 2, 4);
-
         // how to write multiline string literal? You just write it.
         let input = "abc
 % some comment
