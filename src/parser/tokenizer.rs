@@ -8,17 +8,17 @@ use regex::Regex;
 // TODO: Use tuple where required to store the text along with token type
 // E.g. Identifier(String);
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Token {
-    Identifier(String),
-    Condition(String),
+pub enum Token<'a> {
+    Identifier(&'a str),
+    Condition(&'a str),
     Indent,
     Dedent,
-    Unknown(String),
-    Comment(String),
+    Unknown(&'a str),
+    Comment(&'a str),
+    Action(&'a str),
     ParallelState,
     FinalState,
     InitialState,
-    ActionMarker,
     TransitionArrow,
 }
 
@@ -32,18 +32,13 @@ pub enum Token {
 // won't waste time parsing the rest of the string.
 
 
-fn unknown_token() -> Token {
-    // Why do i have to use the to_string method here?
-    Token::Unknown("unknown".to_string())
-}
-
 fn comment_token(offset: usize, input: &str) -> Token {
-    let text = input[offset..].to_string();
+    let text = &input[offset..];
 
-    Token::Comment(text.clone())
+    Token::Comment(text)
 }
 
-fn condition_token(mut offset: usize, input: &str) -> Token {
+fn condition_token(mut offset: usize, input: &str) -> (usize, Token) {
     let input_as_chars: Vec<char> = input.chars().collect();
 
     let mut c = input_as_chars[offset];
@@ -54,25 +49,46 @@ fn condition_token(mut offset: usize, input: &str) -> Token {
     }
     offset -= 1;
     let identifier = identifier_token(offset, input);
-    let text = match identifier.clone() {
+
+    let text = match identifier {
         Token::Identifier(t) => t,
-        _ => " ".to_string(),
+        _ => " ",
     };
 
-    Token::Condition(text.clone())
+    (offset + text.len(), Token::Condition(text))
+}
+
+fn action_token(mut offset: usize, input: &str) -> (usize, Token) {
+    let input_as_chars: Vec<char> = input.chars().collect();
+
+    let mut c = input_as_chars[offset];
+
+    while !is_identifier_start(c) {
+        c = input_as_chars[offset];
+        offset += 1;
+    }
+    offset -= 1;
+    let identifier = identifier_token(offset, input);
+
+    let text = match identifier {
+        Token::Identifier(t) => t,
+        _ => " ",
+    };
+
+    (offset + text.len(), Token::Action(text))
 }
 
 fn identifier_token(offset: usize, input: &str) -> Token {
-    let text = input[offset..].split(' ').collect::<Vec<&str>>()[0].to_string();
+    let text = &input[offset..].split(|c| is_identifier_start(c) == false).collect::<Vec<&str>>()[0];
 
-    Token::Identifier(text.clone())
+    Token::Identifier(text)
 }
 
 fn is_identifier_start(c: char) -> bool {
     // How do i use regex in rust?
     // rust does not support regular expressions (regex) out of the box
     // We have to use an external library
-    let re = Regex::new(r"[#a-zA-Z0-9_\.]").unwrap();
+    let re = Regex::new(r"^[#a-zA-Z0-9_\.]").unwrap();
 
     // How do i convert character to string?
     // is_match method expects a string
@@ -87,10 +103,10 @@ fn is_identifier_start(c: char) -> bool {
 // This is the whole reason i had to write a tokenizer in a recursive descent 
 // parser.
 // This step in the tokenizer makes life much simpler for the parser.
-fn indent_dedent_tokens(
+fn indent_dedent_tokens<'a>(
     indent_stack: &mut Vec<usize>,
     line: &Vec<char>,
-) -> (usize, Vec<Token>) {
+) -> (usize, Vec<Token<'a>>) {
     let mut offset = 0;
     let mut current_indent_level: usize = 0;
     let mut tokens: Vec<Token> = Vec::new();
@@ -137,6 +153,7 @@ fn indent_dedent_tokens(
                         if prev_indent > current_indent_level {
                             tokens.push(Token::Dedent);
                         } else {
+                            indent_stack.push(prev_indent);
                             break;
                         }
                     }
@@ -144,6 +161,8 @@ fn indent_dedent_tokens(
             }
         }
     }
+    let s: String = line.into_iter().collect();
+    println!("line {:?} {:?} {:?} {:?}", s, indent_stack, current_indent_level, tokens);
 
     (offset, tokens)
 }
@@ -166,7 +185,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     // How to create an empty vector?
     let mut tokens: Vec<Token> = Vec::new();
     // line and col keep track of the current line and col number
-    let mut line_number = 0;
+    // let mut line_number = 0;
     // offset keeps track of the current character position in the line
     let mut offset;
     let mut indent_stack: Vec<usize> = Vec::new();
@@ -217,13 +236,8 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                     offset += 1;
                 }
                 ';' => {
-                    let condition = condition_token(offset, line);
-                    // let TokenType::Condition(text) = condition.token_type;
-                    let text = match condition.clone() {
-                        Token::Condition(t) => t,
-                        _ => " ".to_string(),
-                    };
-                    offset += text.len();
+                    let (new_offset, condition) = condition_token(offset, line);
+                    offset  = new_offset;
                     tokens.push(condition);
                 }
                 '-' => {
@@ -231,32 +245,33 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                         tokens.push(Token::TransitionArrow);
                         offset += 2;
                     } else {
-                        tokens.push(unknown_token());
+                        tokens.push(Token::Unknown("unknown"));
                         offset += 1;
                     }
                 }
                 '>' => {
-                    offset += 1;
-                    tokens.push(Token::ActionMarker);
+                    let (new_offset, condition) = action_token(offset, line);
+                    offset  = new_offset;
+                    tokens.push(condition);
                 }
                 c if is_identifier_start(c) => {
                     let identifier = identifier_token(offset, line);
                     let text = match identifier.clone() {
                         Token::Identifier(t) => t,
-                        _ => " ".to_string(),
+                        _ => " ",
                     };
                     offset += text.len();
                     tokens.push(identifier);
                 }
                 c if c.is_whitespace() => offset += 1,
                 _ => {
-                    tokens.push(unknown_token());
+                    tokens.push(Token::Unknown("unknown"));
                     offset += 1;
                 }
             }
         }
 
-        line_number += 1;
+        // line_number += 1;
     }
 
     // pop out all the Dedents
@@ -288,10 +303,10 @@ mod tests {
     -> ast; ifyes
     -> lastState; ifno";
 
-    static INVALID_INPUT_STR: &str = "abc
-  def -> lmn
-      pqr
-    stm";
+    // static INVALID_INPUT_STR: &str = "abc
+  // def -> lmn
+      // pqr
+    // stm";
 
     #[test]
     fn it_works() {
@@ -302,34 +317,60 @@ mod tests {
         // 1. Fail the test manually. E.g. assert_eq!(1, 0)
         // 2. use the --nocapture flag while running the tests
         let tokens = tokenize(INPUT);
+        let expected_tokens = vec![
+            Token::Identifier("abc"),
+            Token::Comment("% some comment"),
+            Token::Indent,
+            Token::Identifier("def"),
+            Token::TransitionArrow,
+            Token::Identifier("lmn"),
+            Token::Identifier("pasta"),
+            Token::TransitionArrow,
+            Token::Identifier("noodles"),
+            Token::Comment("%more comment"),
+            Token::Identifier("ast"),
+            Token::ParallelState,
+            Token::InitialState,
+            Token::Indent,
+            Token::Identifier("opq"),
+            Token::TransitionArrow,
+            Token::Identifier("rst"),
+            Token::Condition("ifyes"),
+            Token::Identifier("uvw"),
+            Token::TransitionArrow,
+            Token::Identifier("#abc.lastState"),
+            Token::Identifier("nestedstate1"),
+            Token::Identifier("nestedstate2"),
+            Token::InitialState,
+            Token::Dedent,
+            Token::Identifier("tried"),
+            Token::TransitionArrow,
+            Token::Identifier("that"),
+            Token::Action("andDoThis"),
+            Token::Identifier("lastState"),
+            Token::Indent,
+            Token::Comment("% trying out transient state"),
+            Token::TransitionArrow,
+            Token::Identifier("ast"),
+            Token::Condition("ifyes"),
+            Token::TransitionArrow,
+            Token::Identifier("lastState"),
+            Token::Condition("ifno"),
+            Token::Dedent,
+            Token::Dedent,
+        ];
 
-        println!(
-            "{:#?} {:#?}",
-            tokens.len(),
-            "placeholder",
-            // how do i find an element in a vector?
-            // tokens
-                // .iter()
-                // .find(|&t| t.token_type == TokenType::Condition(_))
-        );
-
+        // println!("tokens {:#?}", tokens);
         //
-        assert_eq!(tokens.len(), 39);
+        assert_eq!(tokens.len(), 40);
+        assert_eq!(expected_tokens, tokens);
+
+        // another way to test the same thing. Good for debugging.
+        let mut i = 0;
+
+        while i < expected_tokens.len() {
+            assert_eq!(expected_tokens[i], tokens[i]);
+            i += 1;
+        }
     }
-
-    #[test]
-    fn test_token_type() {
-        let tokens = tokenize(INPUT);
-
-        // using {:?} prints structures other than the basic ones
-        // using {:#?} pretty prints
-        println!("tokens {:#?}", tokens);
-        println!("token {:?}", tokens[21]);
-
-        assert_eq!(tokens[1], Token::Comment("% some comment".to_string()));
-        assert_eq!(tokens[2], Token::Indent);
-        assert_eq!(tokens[11], Token::Indent);
-        assert_eq!(tokens[21], Token::Dedent);
-    }
-
 }
