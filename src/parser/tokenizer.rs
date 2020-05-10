@@ -5,14 +5,16 @@ use regex::Regex;
 // 1. We can implement the Debug trait
 // 2. We can use the derive attribute. An attribute is used like in the format
 // below and is used to add some meta data to the program for the compiler.
-#[derive(Debug, PartialEq, Eq)]
+// TODO: Use tuple where required to store the text along with token type
+// E.g. Identifier(String);
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TokenType {
-    Identifier,
-    Condition,
+    Identifier(String),
+    Condition(String),
     Indent,
     Dedent,
-    Unknown,
-    Comment,
+    Unknown(String),
+    Comment(String),
     ParallelState,
     FinalState,
     InitialState,
@@ -22,7 +24,6 @@ pub enum TokenType {
 
 #[derive(Debug)]
 pub struct Token {
-    pub text: String,
     pub line: usize,
     pub col: usize,
     pub token_type: TokenType,
@@ -33,7 +34,6 @@ fn token_without_text(line: usize, col: usize, token_type: TokenType) -> Token {
         token_type,
         line,
         col,
-        text: "".to_string(),
     }
 }
 
@@ -56,17 +56,17 @@ fn arrow_token(line: usize, col: usize) -> Token {
 fn unknown_token(line: usize, col: usize) -> Token {
     Token {
         // Why do i have to use the to_string method here?
-        text: "unknown".to_string(),
-        token_type: TokenType::Unknown,
+        token_type: TokenType::Unknown("unknown".to_string()),
         line,
         col,
     }
 }
 
 fn comment_token(line: usize, offset: usize, input: &str) -> Token {
+    let text = input[offset..].to_string();
+
     Token {
-        token_type: TokenType::Comment,
-        text: input[offset..].to_string(),
+        token_type: TokenType::Comment(text.clone()),
         line,
         col: offset,
     }
@@ -82,19 +82,19 @@ fn condition_token(line: usize, mut offset: usize, input: &str) -> Token {
         offset += 1;
     }
     offset -= 1;
+    let text = input[offset..].split(' ').collect::<Vec<&str>>()[0].to_string();
 
     return Token {
-        token_type: TokenType::Condition,
+        token_type: TokenType::Condition(text.clone()),
         ..identifier_token(line, offset, input)
     }
 }
 
-fn action_token(line: usize, offset: usize, input: &str) -> Token {
+fn action_token(line: usize, offset: usize) -> Token {
     Token {
         token_type: TokenType::Actions,
         line,
         col: offset,
-        text: condition_token(line, offset, input).text,
     }
 }
 
@@ -104,8 +104,7 @@ fn identifier_token(line: usize, offset: usize, input: &str) -> Token {
     // println!("{:?} {:?}", input, text);
 
     Token {
-        token_type: TokenType::Identifier,
-        text,
+        token_type: TokenType::Identifier(text.clone()),
         line,
         col: offset,
     }
@@ -262,7 +261,12 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 }
                 ';' => {
                     let condition = condition_token(line_number, offset, line);
-                    offset += condition.text.len();
+                    // let TokenType::Condition(text) = condition.token_type;
+                    let text = match condition.token_type.clone() {
+                        TokenType::Condition(t) => t,
+                        _ => " ".to_string(),
+                    };
+                    offset += text.len();
                     tokens.push(condition);
                 }
                 '-' => {
@@ -275,14 +279,17 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                     }
                 }
                 '>' => {
-                    let actions = action_token(line_number, offset, line);
-                    println!("action {:?}", actions.text);
-                    offset += actions.text.len();
+                    let actions = action_token(line_number, offset);
+                    offset += 1;
                     tokens.push(actions);
                 }
                 c if is_identifier_start(c) => {
                     let identifier = identifier_token(line_number, offset, line);
-                    offset += identifier.text.len();
+                    let text = match identifier.token_type.clone() {
+                        TokenType::Identifier(t) => t,
+                        _ => " ".to_string(),
+                    };
+                    offset += text.len();
                     tokens.push(identifier);
                 }
                 c if c.is_whitespace() => offset += 1,
@@ -325,7 +332,7 @@ mod tests {
     -> ast; ifyes
     -> lastState; ifno";
 
-    static invalidInputStr: &str = "abc
+    static INVALID_INPUT_STR: &str = "abc
   def -> lmn
       pqr
     stm";
@@ -343,10 +350,11 @@ mod tests {
         println!(
             "{:#?} {:#?}",
             tokens.len(),
+            "placeholder",
             // how do i find an element in a vector?
-            tokens
-                .iter()
-                .find(|&t| t.token_type == TokenType::Condition)
+            // tokens
+                // .iter()
+                // .find(|&t| t.token_type == TokenType::Condition(_))
         );
 
         //
@@ -357,10 +365,12 @@ mod tests {
     fn test_token_type() {
         let tokens = tokenize(INPUT);
 
-        println!("First token {:?}", tokens[0]);
+        // using {:?} prints structures other than the basic ones
+        // using {:#?} pretty prints
+        println!("tokens {:#?}", tokens);
         println!("token {:?}", tokens[21]);
 
-        assert_eq!(tokens[1].token_type, TokenType::Comment);
+        assert_eq!(tokens[1].token_type, TokenType::Comment("% some comment".to_string()));
         assert_eq!(tokens[2].token_type, TokenType::Indent);
         assert_eq!(tokens[11].token_type, TokenType::Indent);
         assert_eq!(tokens[21].token_type, TokenType::Dedent);

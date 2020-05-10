@@ -6,3 +6,7 @@
    to work.
 4. [ ] NEXT Copy other tokenizer tests from the JS version
 5. [ ] Figure out how to share the input string between different test functions
+6. Rust tip: If you want  to run your tests in watch mode using `cargo watch`
+   and also be able to print to console in tests - 
+   `cargo watch “test -- --nocapture”`
+7.
