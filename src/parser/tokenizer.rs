@@ -38,6 +38,7 @@ fn comment_token(offset: usize, input: &str) -> Token {
     Token::Comment(text)
 }
 
+// TODO: move the code to get identifier text to another function
 fn condition_token(mut offset: usize, input: &str) -> (usize, Token) {
     let input_as_chars: Vec<char> = input.chars().collect();
 
@@ -161,8 +162,6 @@ fn indent_dedent_tokens<'a>(
             }
         }
     }
-    let s: String = line.into_iter().collect();
-    println!("line {:?} {:?} {:?} {:?}", s, indent_stack, current_indent_level, tokens);
 
     (offset, tokens)
 }
