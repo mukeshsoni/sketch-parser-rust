@@ -32,18 +32,18 @@ pub enum Token {
 // won't waste time parsing the rest of the string.
 
 
-fn unknown_token(line: usize, col: usize) -> Token {
+fn unknown_token() -> Token {
     // Why do i have to use the to_string method here?
     Token::Unknown("unknown".to_string())
 }
 
-fn comment_token(line: usize, offset: usize, input: &str) -> Token {
+fn comment_token(offset: usize, input: &str) -> Token {
     let text = input[offset..].to_string();
 
     Token::Comment(text.clone())
 }
 
-fn condition_token(line: usize, mut offset: usize, input: &str) -> Token {
+fn condition_token(mut offset: usize, input: &str) -> Token {
     let input_as_chars: Vec<char> = input.chars().collect();
 
     let mut c = input_as_chars[offset];
@@ -53,7 +53,7 @@ fn condition_token(line: usize, mut offset: usize, input: &str) -> Token {
         offset += 1;
     }
     offset -= 1;
-    let identifier = identifier_token(line, offset, input);
+    let identifier = identifier_token(offset, input);
     let text = match identifier.clone() {
         Token::Identifier(t) => t,
         _ => " ".to_string(),
@@ -62,7 +62,7 @@ fn condition_token(line: usize, mut offset: usize, input: &str) -> Token {
     Token::Condition(text.clone())
 }
 
-fn identifier_token(line: usize, offset: usize, input: &str) -> Token {
+fn identifier_token(offset: usize, input: &str) -> Token {
     let text = input[offset..].split(' ').collect::<Vec<&str>>()[0].to_string();
 
     Token::Identifier(text.clone())
@@ -88,7 +88,6 @@ fn is_identifier_start(c: char) -> bool {
 // parser.
 // This step in the tokenizer makes life much simpler for the parser.
 fn indent_dedent_tokens(
-    line_number: usize,
     indent_stack: &mut Vec<usize>,
     line: &Vec<char>,
 ) -> (usize, Vec<Token>) {
@@ -188,7 +187,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
         let char_vec: Vec<char> = line.chars().collect();
 
         let (new_offset, indent_tokens) =
-            indent_dedent_tokens(line_number, &mut indent_stack, &char_vec);
+            indent_dedent_tokens(&mut indent_stack, &char_vec);
         offset = new_offset;
 
         // extend extends a collection with contents of an iterator
@@ -202,7 +201,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
             match c {
                 // How to create new values of a struct?
                 '%' => {
-                    tokens.push(comment_token(line_number, offset, line));
+                    tokens.push(comment_token(offset, line));
                     break;
                 }
                 '&' => {
@@ -218,7 +217,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                     offset += 1;
                 }
                 ';' => {
-                    let condition = condition_token(line_number, offset, line);
+                    let condition = condition_token(offset, line);
                     // let TokenType::Condition(text) = condition.token_type;
                     let text = match condition.clone() {
                         Token::Condition(t) => t,
@@ -232,7 +231,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                         tokens.push(Token::TransitionArrow);
                         offset += 2;
                     } else {
-                        tokens.push(unknown_token(line_number, offset));
+                        tokens.push(unknown_token());
                         offset += 1;
                     }
                 }
@@ -241,7 +240,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                     tokens.push(Token::ActionMarker);
                 }
                 c if is_identifier_start(c) => {
-                    let identifier = identifier_token(line_number, offset, line);
+                    let identifier = identifier_token(offset, line);
                     let text = match identifier.clone() {
                         Token::Identifier(t) => t,
                         _ => " ".to_string(),
@@ -251,7 +250,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 }
                 c if c.is_whitespace() => offset += 1,
                 _ => {
-                    tokens.push(unknown_token(line_number, offset));
+                    tokens.push(unknown_token());
                     offset += 1;
                 }
             }
