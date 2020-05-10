@@ -8,7 +8,7 @@ use regex::Regex;
 // TODO: Use tuple where required to store the text along with token type
 // E.g. Identifier(String);
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum TokenType {
+pub enum Token {
     Identifier(String),
     Condition(String),
     Indent,
@@ -18,58 +18,29 @@ pub enum TokenType {
     ParallelState,
     FinalState,
     InitialState,
-    Actions,
+    ActionMarker,
     TransitionArrow,
 }
 
-#[derive(Debug)]
-pub struct Token {
-    pub line: usize,
-    pub col: usize,
-    pub token_type: TokenType,
-}
+// Instead of having a Token type with line and col, maybe it's better to rename
+// TokenType to Token, convert the lexer to an iterator where the parser keeps
+// asking for the next token. And when the parser needs it, most probably during
+// an error, the parser can ask the lexer for the current line and column
+// It will also make our lexer more performant because it will not go through 
+// the whole text and get all tokens. It will do so lazily. In most cases when 
+// there's an error in the initial parts of the string or in the middle, it 
+// won't waste time parsing the rest of the string.
 
-fn token_without_text(line: usize, col: usize, token_type: TokenType) -> Token {
-    Token {
-        token_type,
-        line,
-        col,
-    }
-}
-
-fn parallel_state_token(line: usize, col: usize) -> Token {
-    token_without_text(line, col, TokenType::ParallelState)
-}
-
-fn final_state_token(line: usize, col: usize) -> Token {
-    token_without_text(line, col, TokenType::FinalState)
-}
-
-fn initial_state_token(line: usize, col: usize) -> Token {
-    token_without_text(line, col, TokenType::InitialState)
-}
-
-fn arrow_token(line: usize, col: usize) -> Token {
-    token_without_text(line, col, TokenType::TransitionArrow)
-}
 
 fn unknown_token(line: usize, col: usize) -> Token {
-    Token {
-        // Why do i have to use the to_string method here?
-        token_type: TokenType::Unknown("unknown".to_string()),
-        line,
-        col,
-    }
+    // Why do i have to use the to_string method here?
+    Token::Unknown("unknown".to_string())
 }
 
 fn comment_token(line: usize, offset: usize, input: &str) -> Token {
     let text = input[offset..].to_string();
 
-    Token {
-        token_type: TokenType::Comment(text.clone()),
-        line,
-        col: offset,
-    }
+    Token::Comment(text.clone())
 }
 
 fn condition_token(line: usize, mut offset: usize, input: &str) -> Token {
@@ -82,32 +53,19 @@ fn condition_token(line: usize, mut offset: usize, input: &str) -> Token {
         offset += 1;
     }
     offset -= 1;
-    let text = input[offset..].split(' ').collect::<Vec<&str>>()[0].to_string();
+    let identifier = identifier_token(line, offset, input);
+    let text = match identifier.clone() {
+        Token::Identifier(t) => t,
+        _ => " ".to_string(),
+    };
 
-    return Token {
-        token_type: TokenType::Condition(text.clone()),
-        ..identifier_token(line, offset, input)
-    }
-}
-
-fn action_token(line: usize, offset: usize) -> Token {
-    Token {
-        token_type: TokenType::Actions,
-        line,
-        col: offset,
-    }
+    Token::Condition(text.clone())
 }
 
 fn identifier_token(line: usize, offset: usize, input: &str) -> Token {
     let text = input[offset..].split(' ').collect::<Vec<&str>>()[0].to_string();
 
-    // println!("{:?} {:?}", input, text);
-
-    Token {
-        token_type: TokenType::Identifier(text.clone()),
-        line,
-        col: offset,
-    }
+    Token::Identifier(text.clone())
 }
 
 fn is_identifier_start(c: char) -> bool {
@@ -149,12 +107,12 @@ fn indent_dedent_tokens(
                 // it's the first indent we have encountered
                 // or - all indents have been deindented
                 indent_stack.push(current_indent_level);
-                tokens.push(token_without_text(line_number, 0, TokenType::Indent));
+                tokens.push(Token::Indent);
             }
             Some(&prev_indent_level) => {
                 if prev_indent_level < current_indent_level {
                     indent_stack.push(current_indent_level);
-                    tokens.push(token_without_text(line_number, 0, TokenType::Indent));
+                    tokens.push(Token::Indent);
                 } else if prev_indent_level > current_indent_level {
 
                     // TODO: we should implement some syntax error checking 
@@ -178,7 +136,7 @@ fn indent_dedent_tokens(
                         // until we reach the current indent level
                         // push those many dedent tokens to tokenizer
                         if prev_indent > current_indent_level {
-                            tokens.push(token_without_text(line_number, 0, TokenType::Dedent));
+                            tokens.push(Token::Dedent);
                         } else {
                             break;
                         }
@@ -248,22 +206,22 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                     break;
                 }
                 '&' => {
-                    tokens.push(parallel_state_token(line_number, offset));
+                    tokens.push(Token::ParallelState);
                     offset += 1;
                 }
                 '$' => {
-                    tokens.push(final_state_token(line_number, offset));
+                    tokens.push(Token::FinalState);
                     offset += 1;
                 }
                 '*' => {
-                    tokens.push(initial_state_token(line_number, offset));
+                    tokens.push(Token::InitialState);
                     offset += 1;
                 }
                 ';' => {
                     let condition = condition_token(line_number, offset, line);
                     // let TokenType::Condition(text) = condition.token_type;
-                    let text = match condition.token_type.clone() {
-                        TokenType::Condition(t) => t,
+                    let text = match condition.clone() {
+                        Token::Condition(t) => t,
                         _ => " ".to_string(),
                     };
                     offset += text.len();
@@ -271,7 +229,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 }
                 '-' => {
                     if offset < line.len() - 1 && char_vec[offset + 1] == '>' {
-                        tokens.push(arrow_token(line_number, offset));
+                        tokens.push(Token::TransitionArrow);
                         offset += 2;
                     } else {
                         tokens.push(unknown_token(line_number, offset));
@@ -279,14 +237,13 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                     }
                 }
                 '>' => {
-                    let actions = action_token(line_number, offset);
                     offset += 1;
-                    tokens.push(actions);
+                    tokens.push(Token::ActionMarker);
                 }
                 c if is_identifier_start(c) => {
                     let identifier = identifier_token(line_number, offset, line);
-                    let text = match identifier.token_type.clone() {
-                        TokenType::Identifier(t) => t,
+                    let text = match identifier.clone() {
+                        Token::Identifier(t) => t,
                         _ => " ".to_string(),
                     };
                     offset += text.len();
@@ -306,7 +263,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     // pop out all the Dedents
     while indent_stack.len() > 0 {
         indent_stack.pop();
-        tokens.push(token_without_text(line_number, 0, TokenType::Dedent));
+        tokens.push(Token::Dedent);
     }
 
     // println!("tokens: {:?}", tokens.len());
@@ -370,10 +327,10 @@ mod tests {
         println!("tokens {:#?}", tokens);
         println!("token {:?}", tokens[21]);
 
-        assert_eq!(tokens[1].token_type, TokenType::Comment("% some comment".to_string()));
-        assert_eq!(tokens[2].token_type, TokenType::Indent);
-        assert_eq!(tokens[11].token_type, TokenType::Indent);
-        assert_eq!(tokens[21].token_type, TokenType::Dedent);
+        assert_eq!(tokens[1], Token::Comment("% some comment".to_string()));
+        assert_eq!(tokens[2], Token::Indent);
+        assert_eq!(tokens[11], Token::Indent);
+        assert_eq!(tokens[21], Token::Dedent);
     }
 
 }

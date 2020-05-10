@@ -9,4 +9,11 @@
 6. Rust tip: If you want  to run your tests in watch mode using `cargo watch`
    and also be able to print to console in tests - 
    `cargo watch “test -- --nocapture”`
-7.
+7.  Instead of having a Token type with line and col, maybe it's better to rename
+ TokenType to Token, convert the lexer to an iterator where the parser keeps
+ asking for the next token. And when the parser needs it, most probably during
+ an error, the parser can ask the lexer for the current line and column
+ It will also make our lexer more performant because it will not go through 
+ the whole text and get all tokens. It will do so lazily. In most cases when 
+ there's an error in the initial parts of the string or in the middle, it 
+ won't waste time parsing the rest of the string.
