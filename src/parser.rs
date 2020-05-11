@@ -3,7 +3,7 @@ use std::collections::HashMap;
 mod tokenizer;
 use tokenizer::*;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum StateType {
     AtomicState,
     CompoundState,
@@ -11,14 +11,15 @@ enum StateType {
     ParallelState,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TransitionNode<'a> {
+    event_name: &'a str,
     target: &'a str,
     cond: Option<&'a str>,
-    action: Option<&'a str>,
+    actions: Option<Vec<&'a str>>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct StateNode<'a> {
     id: &'a str,
     typ: StateType,
@@ -28,6 +29,11 @@ pub struct StateNode<'a> {
     states: HashMap<&'a str, StateNode<'a>>,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum TransitionOrState<'a> {
+    State(StateNode<'a>),
+    Transition(TransitionNode<'a>)
+}
 // TODO: This return value is not enough. We need to consume the token, which
 // means updating the offset. Each parser can change the offset by different
 // amount. We can either return a tuple (new_offset, Option<&'a str>) or we
@@ -104,7 +110,7 @@ struct Parser<'a> {
 // The return type sends the offset as a return value in both success and fail
 // case since both are actually success for zero_or_one. No match is also what
 // this parser is supposed to treat as a success.
-fn zero_or_one<T, F>(offset: usize, mut f: F) -> (usize, Option<(T)>)
+fn zero_or_one<T, F>(offset: usize, f: F) -> (usize, Option<T>)
 where
     F: Fn(usize) -> Option<(usize, T)>,
 {
@@ -120,7 +126,7 @@ where
 // them out of the impl methods
 fn zero_or_more<T, F>(offset: usize, mut f: F) -> (usize, Option<Vec<T>>)
 where
-    F: Fn(usize) -> Option<(usize, T)>,
+    F: FnMut(usize) -> Option<(usize, T)>,
 {
     let mut new_offset = offset;
     let mut parsed_values = vec![];
@@ -137,6 +143,38 @@ where
         return (offset, None);
     }
 }
+
+fn one_or_another<T, F>(offset: usize, f1: F, f2: F) -> Option<T> 
+    where
+        F: Fn(usize) -> Option<T>
+{
+    if let Some(x) = f1(offset) {
+        return Some(x);
+    }
+
+    f2(offset)
+}
+
+
+fn get_state_type(is_parallel_state: bool, is_final_state: bool, sub_states_count: usize) -> StateType {
+    if(is_parallel_state) {
+        return StateType::ParallelState;
+    }
+
+    if(is_final_state) {
+        return StateType::FinalState;
+    }
+
+    if(sub_states_count > 0) {
+        return StateType::CompoundState;
+    }
+
+
+    return StateType::AtomicState;
+}
+
+// all parsers return Option<(offset, returnValueForThatParser)>
+// all parser combinators return (offset, Option<returnValueForParser or Vec<returnValueForParser>>)
 
 impl<'a> Parser<'a> {
     // Question: Should the input str be sent when creating a new parser or
@@ -163,6 +201,73 @@ impl<'a> Parser<'a> {
         }
 
         None
+    }
+
+    fn transition_arrow(&self, offset: usize) -> Option<(usize, bool)> {
+        if let TokenType::TransitionArrow = self.tokens[offset].typ {
+            return Some((offset + 1, true))
+        }
+
+        None
+    }
+    
+    fn condition(&self, offset: usize) -> Option<(usize, &'a str)> {
+        if let TokenType::Condition(cond_str) = self.tokens[offset].typ  {
+            return Some((offset + 1, cond_str));
+        }
+
+        None
+    }
+
+    fn action(&self, offset: usize) -> Option<(usize, &'a str)> {
+        if let TokenType::Action(cond_str) = self.tokens[offset].typ  {
+            return Some((offset + 1, cond_str));
+        }
+
+        None
+    }
+
+    fn transition(&self, offset: usize) -> Option<(usize, TransitionNode<'a>)> {
+        let mut new_offset = offset;
+        let (offset, event_name_option) = zero_or_one(offset, |offset| self.identifier(offset));
+        let mut event_name = "";
+        let (offset, _) = self.transition_arrow(offset)?;
+        let (offset, target) = self.identifier(offset)?;
+
+        // println!("event_name_option {:#?}", event_name_option);
+        let mut condition_name = None;
+        let mut action_names = None;
+
+        if let Some(en) = event_name_option {
+            event_name = en;
+            let (offset, cn) = zero_or_one(offset, |offset| self.condition(offset));
+            condition_name = cn;
+            let (offset, ans) = zero_or_more(offset, |offset| self.action(offset));
+            action_names = ans;
+            new_offset = offset;
+        } else {
+            // if the event name is not given, we definitely want the condition
+            // It means it's a transient event and needs to be accompanied by
+            // a condition
+            let (offset, condition_name_str) = self.condition(offset)?;
+            condition_name = Some(condition_name_str);
+            let (offset, action_name_option) = zero_or_more(offset, |offset| self.action(offset));
+
+            if let Some(action_name_strings) = action_name_option {
+                action_names = Some(action_name_strings);
+            }
+
+            new_offset = offset;
+        }
+
+        let transition_node = TransitionNode {
+            event_name,
+            target,
+            cond: condition_name,
+            actions: action_names,
+        };
+
+        Some((new_offset, transition_node))
     }
 
     fn parallel_state(&self, offset: usize) -> Option<(usize, bool)> {
@@ -198,51 +303,103 @@ impl<'a> Parser<'a> {
     }
 
     fn dedent(&self, offset: usize) -> Option<(usize, bool)> {
-        if self.tokens[offset].typ == TokenType::Dedent {
-            return Some((offset + 1, true));
+        if let Some(token) = self.get_token_at(offset) {
+            if token.typ == TokenType::Dedent {
+                return Some((offset + 1, true));
+            }
         }
 
         None
     }
 
+    fn get_token_at(&self, offset: usize) -> Option<&Token<'a>> {
+        if(offset < self.tokens.len()) {
+            return Some(&self.tokens[offset]);
+        }
+
+        None
+    }
     // All our parsers will return an Option. If parsing was successful, return
     // Some<SomeData> else return None. We can probably write generic functions
     // which can handle these Option<T> return values. Functions like zero_or_more
     // one_or_more etc.
     // We can use the question mark (?) operator
     // self.identifier()?;
-    fn state_parser(&mut self, offset: usize) -> (usize, Option<StateNode<'a>>) {
-        let mut new_offset = offset;
-        // we have to find a better way of passing on the None values from
-        // one parser to another. Panicing will not do.
-        let (offset, id) = self.identifier(offset).unwrap();
+    fn state_parser(&mut self, offset: usize) -> Option<(usize, StateNode<'a>)> {
+        let (offset, id) = self.identifier(offset)?;
         let (offset, is_parallel_state_option) =
             zero_or_one(offset, |offset| self.parallel_state(offset));
+        // rust tip: Super way to get a value out of an option if we don't care 
+        // about the absent value and have a default value as replacement.
         let is_parallel_state = is_parallel_state_option.unwrap_or(false);
 
         let (offset, is_final_state_option) =
-            zero_or_one(offset, |offset| self.final_state(offset));
+            zero_or_one(offset, |o| self.final_state(o));
         let is_final_state = is_final_state_option.unwrap_or(false);
 
         let (offset, is_initial_state_option) =
-            zero_or_one(offset, |offset| self.initial_state(offset));
+            zero_or_one(offset, |o| self.initial_state(o));
         let is_initial_state = is_initial_state_option.unwrap_or(false);
 
-        let (offset, is_indent_there_option) = zero_or_one(offset, |offset| self.indent(offset));
+        let (mut offset, is_indent_there_option) = zero_or_one(offset, |o| self.indent(o));
         let is_indent_there = is_indent_there_option.unwrap_or(false);
+        let mut transitions: Vec<(&'a str, TransitionNode<'a>)>  = vec![];
+        let mut sub_states: Vec<(&'a str, StateNode<'a>)> = vec![];
 
         if is_indent_there {
-            zero_or_more(offset, |offset| self.dedent(offset));
+            // Had to create a separate enum to hold either TransitionNode or 
+            // StateNode. And then it became super painful to take them apart.
+            let (new_offset, transitions_and_states_option) = zero_or_more(offset, |o| -> Option<(usize, TransitionOrState)> {
+                if let Some((no, x)) = self.transition(o) {
+                    return Some((no, TransitionOrState::Transition(x)));
+                }
+
+                if let Some((no, x)) = self.state_parser(o) {
+                    return Some((no, TransitionOrState::State(x)));
+                }
+
+                return None;
+            });
+
+            if let Some(transitions_and_states) = transitions_and_states_option {
+                // Had to clone the list because otherwise rust complains that
+                // the values are already moved when i try to get the states
+                // in the second filter pass
+                let transitions_and_states_clone = transitions_and_states.clone();
+                transitions = transitions_and_states
+                    .into_iter()
+                    .filter_map(|ts| match ts {
+                        // we can convert a vector to hashmap by having the vector as a
+                        // vector of tuples of (key, val)
+                        TransitionOrState::Transition(t) => Some((t.event_name, t)),
+                        _ => None,
+                    })
+                    .collect();
+                sub_states = transitions_and_states_clone
+                    .into_iter()
+                    .filter_map(|ts| match ts {
+                        TransitionOrState::State(t) => Some((t.id, t)),
+                        _ => None,
+                    })
+                    .collect();
+            }
+
+            zero_or_more(new_offset, |o| self.dedent(o));
+            offset = new_offset;
+
+            let (new_offset, _) = zero_or_one(offset, |o| self.dedent(o));
+            offset = new_offset;
         }
 
-        println!("Next token {:?} {:#?}",is_indent_there, &self.tokens[0..3]);
-        (offset, Some(StateNode {
-            id: "1",
-            typ: StateType::AtomicState,
+        Some((offset, StateNode {
+            id,
+            typ: get_state_type(is_parallel_state, is_final_state, sub_states.len()),
             initial: Some("abc"),
             is_initial: false,
-            on: HashMap::new(),
-            states: HashMap::new(),
+            // we can convert a vector to hashmap by having the vector as a
+            // vector of tuples of (key, val)
+            on: transitions.into_iter().collect(),
+            states: sub_states.into_iter().collect(),
         }))
     }
 
@@ -258,7 +415,8 @@ impl<'a> Parser<'a> {
             .filter(|t| !matches!(t.typ, TokenType::Comment(_)))
             .collect();
 
-        if let (_, Some(ast)) = self.state_parser(0) {
+        if let Some((_, ast)) = self.state_parser(0) {
+            println!("ast {:#?}", ast);
             return Ok(ast);
         }
 
