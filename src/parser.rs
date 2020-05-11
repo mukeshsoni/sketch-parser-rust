@@ -104,13 +104,13 @@ struct Parser<'a> {
 // The return type sends the offset as a return value in both success and fail
 // case since both are actually success for zero_or_one. No match is also what
 // this parser is supposed to treat as a success.
-fn zero_or_one<T, F>(offset: usize, mut f: F) -> (usize, Option<(usize, T)>)
+fn zero_or_one<T, F>(offset: usize, mut f: F) -> (usize, Option<(T)>)
 where
     F: Fn(usize) -> Option<(usize, T)>,
 {
     if let Some(x) = f(offset) {
-        let (new_offset, _) = x;
-        return (new_offset, Some(x));
+        let (new_offset, v) = x;
+        return (new_offset, Some(v));
     }
 
     (offset, None)
@@ -118,7 +118,7 @@ where
 
 // TODO: these parser combinators are not using self at all. We can move
 // them out of the impl methods
-fn zero_or_more<T, F>(offset: usize, mut f: F) -> (usize, Option<(usize, Vec<T>)>)
+fn zero_or_more<T, F>(offset: usize, mut f: F) -> (usize, Option<Vec<T>>)
 where
     F: Fn(usize) -> Option<(usize, T)>,
 {
@@ -131,8 +131,8 @@ where
         parsed_values.push(v);
     }
 
-    if (parsed_values.len() > 0) {
-        return (new_offset, Some((new_offset, parsed_values)));
+    if parsed_values.len() > 0 {
+        return (new_offset, Some(parsed_values));
     } else {
         return (offset, None);
     }
@@ -211,55 +211,39 @@ impl<'a> Parser<'a> {
     // one_or_more etc.
     // We can use the question mark (?) operator
     // self.identifier()?;
-    fn state_parser(&mut self, offset: usize) -> Option<StateNode<'a>> {
-        println!("offset {:?}", offset);
+    fn state_parser(&mut self, offset: usize) -> (usize, Option<StateNode<'a>>) {
         let mut new_offset = offset;
         // we have to find a better way of passing on the None values from
         // one parser to another. Panicing will not do.
-        let (offset, id) = self.identifier(offset)?;
-        let mut is_parallel_state = false;
+        let (offset, id) = self.identifier(offset).unwrap();
         let (offset, is_parallel_state_option) =
             zero_or_one(offset, |offset| self.parallel_state(offset));
+        let is_parallel_state = is_parallel_state_option.unwrap_or(false);
 
-        if let Some(_) = is_parallel_state_option {
-            is_parallel_state = true;
-        }
-
-        let mut is_final_state = false;
         let (offset, is_final_state_option) =
             zero_or_one(offset, |offset| self.final_state(offset));
+        let is_final_state = is_final_state_option.unwrap_or(false);
 
-        if let Some(_) = is_final_state_option {
-            is_final_state = true;
-        }
-
-        let mut is_initial_state = false;
         let (offset, is_initial_state_option) =
             zero_or_one(offset, |offset| self.initial_state(offset));
+        let is_initial_state = is_initial_state_option.unwrap_or(false);
 
-        if let Some(_) = is_initial_state_option {
-            is_initial_state = true;
-        }
-
-        let mut is_indent_there = false;
         let (offset, is_indent_there_option) = zero_or_one(offset, |offset| self.indent(offset));
+        let is_indent_there = is_indent_there_option.unwrap_or(false);
 
-        if let Some(_) = is_indent_there_option {
-            is_indent_there = true;
-        }
-
-        if (is_indent_there) {
+        if is_indent_there {
             zero_or_more(offset, |offset| self.dedent(offset));
         }
 
-        Some(StateNode {
+        println!("Next token {:?} {:#?}",is_indent_there, &self.tokens[0..3]);
+        (offset, Some(StateNode {
             id: "1",
             typ: StateType::AtomicState,
             initial: Some("abc"),
             is_initial: false,
             on: HashMap::new(),
             states: HashMap::new(),
-        })
+        }))
     }
 
     // Our parser returns a Result type. Which means it returns an error if the
@@ -268,10 +252,13 @@ impl<'a> Parser<'a> {
     pub fn parse(&mut self, input_str: &'a str) -> Result<StateNode<'a>, &'a str> {
         self.tokens = tokenize(input_str)
             .into_iter()
+            // rust tip: If you want to match partially on a enum with a value
+            // In this case i didn't care about what's inside Comment enum 
+            // variant
             .filter(|t| !matches!(t.typ, TokenType::Comment(_)))
             .collect();
 
-        if let Some(ast) = self.state_parser(0) {
+        if let (_, Some(ast)) = self.state_parser(0) {
             return Ok(ast);
         }
 
@@ -284,19 +271,19 @@ mod tests {
     use super::*;
 
     static INPUT: &str = "abc
-    % some comment
-      def -> lmn
-      pasta -> noodles %more comment
-      ast&*
-        opq -> rst; ifyes
-        uvw -> #abc.lastState
-        nestedstate1
-        nestedstate2*
-      tried -> that > andDoThis
-      lastState
-        % trying out transient state
-        -> ast; ifyes
-        -> lastState; ifno";
+% some comment
+  def -> lmn
+  pasta -> noodles %more comment
+  ast&*
+    opq -> rst; ifyes
+    uvw -> #abc.lastState
+    nestedstate1
+    nestedstate2*
+  tried -> that > andDoThis
+  lastState
+    % trying out transient state
+    -> ast; ifyes
+    -> lastState; ifno";
 
     #[test]
     fn test_parser() {
