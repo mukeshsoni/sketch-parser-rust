@@ -22,11 +22,13 @@ pub enum TokenType<'a> {
     TransitionArrow,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Position {
     line_number: usize,
     col: usize,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Token<'a> {
     pub typ: TokenType<'a>,
     pub pos: Position,
@@ -36,11 +38,10 @@ pub struct Token<'a> {
 // TokenType to Token, convert the lexer to an iterator where the parser keeps
 // asking for the next token. And when the parser needs it, most probably during
 // an error, the parser can ask the lexer for the current line and column
-// It will also make our lexer more performant because it will not go through 
-// the whole text and get all tokens. It will do so lazily. In most cases when 
-// there's an error in the initial parts of the string or in the middle, it 
+// It will also make our lexer more performant because it will not go through
+// the whole text and get all tokens. It will do so lazily. In most cases when
+// there's an error in the initial parts of the string or in the middle, it
 // won't waste time parsing the rest of the string.
-
 
 fn comment_token(line_number: usize, offset: usize, input: &str) -> Token {
     let text = &input[offset..];
@@ -67,7 +68,10 @@ fn condition_token(line_number: usize, mut offset: usize, input: &str) -> (usize
     };
 
     // TODO: The offset sent to get_token is wrong here. We are mutating it.
-    (offset + text.len(), get_token(line_number, offset, TokenType::Condition(text)))
+    (
+        offset + text.len(),
+        get_token(line_number, offset, TokenType::Condition(text)),
+    )
 }
 
 fn action_token(line_number: usize, mut offset: usize, input: &str) -> (usize, Token) {
@@ -88,11 +92,16 @@ fn action_token(line_number: usize, mut offset: usize, input: &str) -> (usize, T
     };
 
     // TODO: The offset sent to get_token is wrong here. We are mutating it.
-    (offset + text.len(), get_token(line_number, offset, TokenType::Action(text)))
+    (
+        offset + text.len(),
+        get_token(line_number, offset, TokenType::Action(text)),
+    )
 }
 
 fn identifier_token(line_number: usize, offset: usize, input: &str) -> Token {
-    let text = &input[offset..].split(|c| is_identifier_start(c) == false).collect::<Vec<&str>>()[0];
+    let text = &input[offset..]
+        .split(|c| is_identifier_start(c) == false)
+        .collect::<Vec<&str>>()[0];
 
     get_token(line_number, offset, TokenType::Identifier(text))
 }
@@ -113,7 +122,7 @@ fn is_identifier_start(c: char) -> bool {
 
 // this is the key function in the tokenizer
 // because our language is indent based. Parsing it is very tricky.
-// This is the whole reason i had to write a tokenizer in a recursive descent 
+// This is the whole reason i had to write a tokenizer in a recursive descent
 // parser.
 // This step in the tokenizer makes life much simpler for the parser.
 fn indent_dedent_tokens<'a>(
@@ -143,21 +152,19 @@ fn indent_dedent_tokens<'a>(
                     indent_stack.push(current_indent_level);
                     tokens.push(get_token(line_number, offset, TokenType::Indent));
                 } else if prev_indent_level > current_indent_level {
-
-                    // TODO: we should implement some syntax error checking 
-                    // in this part. E.g. previous indent level is 2 and the 
+                    // TODO: we should implement some syntax error checking
+                    // in this part. E.g. previous indent level is 2 and the
                     // current one is 6. It's too much.
                     // Or the one below
                     // const dedentLevelInStack = indentStack.find(
-                      // (n) => n === currentIndentLevel,
+                    // (n) => n === currentIndentLevel,
                     // );
 
                     // // any dedent/outdent must match some previous indentation level.
                     // // otherwise it's a syntax error
                     // if (dedentLevelInStack === undefined) {
-                      // throw new Error('Invalid indentation');
+                    // throw new Error('Invalid indentation');
                     // }
-
 
                     while indent_stack.len() > 0 {
                         let prev_indent = indent_stack.pop().unwrap();
@@ -182,7 +189,7 @@ fn indent_dedent_tokens<'a>(
 fn get_token<'a>(line_number: usize, col: usize, typ: TokenType<'a>) -> Token<'a> {
     Token {
         pos: Position { line_number, col },
-        typ
+        typ,
     }
 }
 
@@ -256,7 +263,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 }
                 ';' => {
                     let (new_offset, condition) = condition_token(line_number, offset, line);
-                    offset  = new_offset;
+                    offset = new_offset;
                     tokens.push(condition);
                 }
                 '-' => {
@@ -264,13 +271,17 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                         tokens.push(get_token(line_number, offset, TokenType::TransitionArrow));
                         offset += 2;
                     } else {
-                        tokens.push(get_token(line_number, offset, TokenType::Unknown("unknown")));
+                        tokens.push(get_token(
+                            line_number,
+                            offset,
+                            TokenType::Unknown("unknown"),
+                        ));
                         offset += 1;
                     }
                 }
                 '>' => {
                     let (new_offset, condition) = action_token(line_number, offset, line);
-                    offset  = new_offset;
+                    offset = new_offset;
                     tokens.push(condition);
                 }
                 c if is_identifier_start(c) => {
@@ -284,7 +295,11 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 }
                 c if c.is_whitespace() => offset += 1,
                 _ => {
-                    tokens.push(get_token(line_number, offset, TokenType::Unknown("unknown")));
+                    tokens.push(get_token(
+                        line_number,
+                        offset,
+                        TokenType::Unknown("unknown"),
+                    ));
                     offset += 1;
                 }
             }
@@ -323,8 +338,8 @@ mod tests {
     -> lastState; ifno";
 
     // static INVALID_INPUT_STR: &str = "abc
-  // def -> lmn
-      // pqr
+    // def -> lmn
+    // pqr
     // stm";
 
     #[test]
