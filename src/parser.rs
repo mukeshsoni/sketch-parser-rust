@@ -45,14 +45,50 @@ pub struct StateNode<'a> {
 //          input_str
 //      }
 //   }
+//
+//   fn parse(&self) {
+//      let tokens = tokenize(self.input_str);
+//
+//      // if we store the token iterator then we won't have to store the offset
+//      // at each stage. We also want the ability to peek into the tokens in 
+//      // case we want to backtrack.
+//      self.tokens = tokens.iter();
+//   }
+//
+//   fn condition(&self) {
+//      if let Token::Condition(text) == self.tokens.peek() {
+//          self.tokens.next();
+//          Some(text)
+//      }
+//
+//      None;
+//   }
+//
+//   OR
+//   
+//   // This one does not use the token iterator. Just uses offset to keep track
+//   // of next token to consume. And consume updates the offset internally.
+//   fn condition(&self) {
+//      if let Token::Condition(text) == self.tokens[self.offset] {
+//          self.consume();
+//          Some(text)
+//      }
+//
+//      None;
+//   }
 // }
-fn condition<'a>(tokens: &Vec<Token<'a>>, offset: usize) -> Option<&'a str> {
-    if let Token::Condition(text) = tokens[offset] {
-       return Some(text);
-    }
 
-    None
-}
+// But the above will not help us with the offset, will it? How will a parser
+// know when to stop peeking and start advancing the iterator? It might do so 
+// wrong and the whole chain becomes buggy from that point.
+// What if each parser returns Option<(new_offset, ParserResult)>? Then each 
+// parser has the responsibility of adjusting the offset after calling other
+// parsers internally. That's not good. Instead only the higher level parser
+// combinators (like oneOrAnother or zero_or_more) should know about the 
+// concept of offset or index.
+// Ok, so individual parsers just consume tokens if they see it fit to do so
+// And only parser combinators worry about backtracking, which involves putting
+// the offset/index back to some previous position.
 
 fn identifier<'a>(tokens: &Vec<Token<'a>>, offset: usize) -> Option<&'a str> {
     if let Token::Identifier(text) = tokens[offset] {
