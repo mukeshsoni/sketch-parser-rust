@@ -4,8 +4,8 @@
 3. Is it better to colocate the rust parser with the chrome extension and then
    move it out if it makes sense? Let's keep it separate until we get the parser
    to work.
-4. [ ] NEXT Copy other tokenizer tests from the JS version
-5. [ ] Figure out how to share the input string between different test functions
+4. [x] NEXT Copy other tokenizer tests from the JS version
+5. [x] Figure out how to share the input string between different test functions
 6. Rust tip: If you want  to run your tests in watch mode using `cargo watch`
    and also be able to print to console in tests - 
    `cargo watch “test -- --nocapture”`
@@ -21,3 +21,4 @@
    backtracking. And not having it as iterator will make it very hard to get the
    line and column number of a token. Will have to go back to adding line and
    column information in the token itself.
+9. [ ] Only thing left is to get hold of initial state for state with sub states.

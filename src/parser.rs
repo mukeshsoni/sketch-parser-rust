@@ -25,7 +25,21 @@ pub struct StateNode<'a> {
     typ: StateType,
     initial: Option<&'a str>,
     is_initial: bool,
-    on: HashMap<&'a str, TransitionNode<'a>>,
+    // xstate has a representation of events as
+    // {
+        // on: [
+            // { event: eventName, target: targetName },
+            // { event: eventName, target: targetName }
+        // ]
+    // }
+    // If we stick to that one represention, it becomes easier to capture the
+    // transient events too. We can have multiple items in the vector which
+    // have event as empty string "". That is not possible if we convert the
+    // events to HashMap
+    // We can anyways convert the final json to various forms. E.g. we can 
+    // convert most events to { on: { 'click': 'go_to_state_1' }} form, because
+    // that's what most people want. Or not.
+    on: Vec<TransitionNode<'a>>,
     states: HashMap<&'a str, StateNode<'a>>,
 }
 
@@ -234,7 +248,6 @@ impl<'a> Parser<'a> {
         let (offset, _) = self.transition_arrow(offset)?;
         let (offset, target) = self.identifier(offset)?;
 
-        // println!("event_name_option {:#?}", event_name_option);
         let mut condition_name = None;
         let mut action_names = None;
 
@@ -246,6 +259,7 @@ impl<'a> Parser<'a> {
             action_names = ans;
             new_offset = offset;
         } else {
+            println!("Got transient transition {:#?}", self.tokens[offset]);
             // if the event name is not given, we definitely want the condition
             // It means it's a transient event and needs to be accompanied by
             // a condition
@@ -343,7 +357,7 @@ impl<'a> Parser<'a> {
 
         let (mut offset, is_indent_there_option) = zero_or_one(offset, |o| self.indent(o));
         let is_indent_there = is_indent_there_option.unwrap_or(false);
-        let mut transitions: Vec<(&'a str, TransitionNode<'a>)>  = vec![];
+        let mut transitions: Vec<TransitionNode<'a>>  = vec![];
         let mut sub_states: Vec<(&'a str, StateNode<'a>)> = vec![];
 
         if is_indent_there {
@@ -371,7 +385,7 @@ impl<'a> Parser<'a> {
                     .filter_map(|ts| match ts {
                         // we can convert a vector to hashmap by having the vector as a
                         // vector of tuples of (key, val)
-                        TransitionOrState::Transition(t) => Some((t.event_name, t)),
+                        TransitionOrState::Transition(t) => Some(t),
                         _ => None,
                     })
                     .collect();
@@ -394,11 +408,15 @@ impl<'a> Parser<'a> {
         Some((offset, StateNode {
             id,
             typ: get_state_type(is_parallel_state, is_final_state, sub_states.len()),
-            initial: Some("abc"),
-            is_initial: false,
+            initial: None,
+            is_initial: is_initial_state,
             // we can convert a vector to hashmap by having the vector as a
             // vector of tuples of (key, val)
-            on: transitions.into_iter().collect(),
+            // TODO: Converting transitions vector to hashmap like this merges
+            // transient transitions into a single one. Keeps the last one.
+            // Because all the transient transitions have the same empty string
+            // key
+            on: transitions,
             states: sub_states.into_iter().collect(),
         }))
     }
@@ -449,12 +467,127 @@ mod tests {
         let ast = parser.parse(INPUT).unwrap();
 
         let expected_ast: StateNode = StateNode {
-            id: "1",
-            typ: StateType::AtomicState,
-            initial: Some("abc"),
+            id: "abc",
+            typ: StateType::CompoundState,
+            initial: None,
             is_initial: false,
-            on: HashMap::new(),
-            states: HashMap::new(),
+            on: vec![
+                TransitionNode {
+                    event_name: "def",
+                    target: "lmn",
+                    cond: None,
+                    actions: None
+                },
+                TransitionNode {
+                    event_name: "pasta",
+                    target: "noodles",
+                    cond: None,
+                    actions: None
+                },
+                TransitionNode {
+                    event_name: "tried",
+                    target: "that",
+                    cond: None,
+                    actions: Some(vec!["andDoThis"])
+                }
+            ],
+            states: vec![
+                (
+                    "lastState", 
+                    StateNode {
+                        id: "lastState",
+                        typ: StateType::AtomicState,
+                        initial: None,
+                        is_initial: false,
+                        on: vec![
+                            TransitionNode {
+                                event_name: "",
+                                target: "ast",
+                                cond: Some("ifyes"),
+                                actions: None
+                            },
+                            TransitionNode {
+                                event_name: "",
+                                target: "lastState",
+                                cond: Some("ifno"),
+                                actions: None
+                            }
+                        ],
+                        states: HashMap::new()
+                    }
+                ),
+                (
+                    "ast",
+                    StateNode {
+                        id: "ast",
+                        typ: StateType::ParallelState,
+                        initial: None,
+                        is_initial: true,
+                        on: vec![
+                            TransitionNode {
+                                event_name: "opq",
+                                target: "rst",
+                                cond: Some("ifyes"),
+                                actions: None,
+                            },
+                            TransitionNode {
+                                event_name: "uvw",
+                                target: "#abc.lastState",
+                                cond: None,
+                                actions: None,
+                            },
+                        ],
+                        states: vec![
+                            (
+                                "nestedstate2",
+                                StateNode {
+                                    id: "nestedstate2",
+                                    typ: StateType::AtomicState,
+                                    initial: None,
+                                    is_initial: true,
+                                    on: vec![],
+                                    states: HashMap::new()
+                                },
+                            ),
+                            (
+                                "nestedstate1",
+                                StateNode {
+                                    id: "nestedstate1",
+                                    typ: StateType::AtomicState,
+                                    initial: None,
+                                    is_initial: false,
+                                    on: vec![],
+                                    states: HashMap::new()
+                                }
+                            )
+                        ].into_iter().collect()
+                    }
+                ),
+                (
+                    "lastState",
+                    StateNode {
+                        id: "lastState",
+                        typ: StateType::AtomicState,
+                        initial: None,
+                        is_initial: false,
+                        on: vec![
+                            TransitionNode {
+                                event_name: "",
+                                target: "ast",
+                                cond: Some("ifyes"),
+                                actions: None,
+                            },
+                            TransitionNode {
+                                event_name: "",
+                                target: "lastState",
+                                cond: Some("ifno"),
+                                actions: None,
+                            }
+                        ],
+                        states: HashMap::new()
+                    }
+                )
+            ].into_iter().collect(),
         };
 
         assert_eq!(expected_ast, ast);
