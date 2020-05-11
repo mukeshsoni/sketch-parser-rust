@@ -8,7 +8,7 @@ use regex::Regex;
 // TODO: Use tuple where required to store the text along with token type
 // E.g. Identifier(String);
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Token<'a> {
+pub enum TokenType<'a> {
     Identifier(&'a str),
     Condition(&'a str),
     Indent,
@@ -22,6 +22,16 @@ pub enum Token<'a> {
     TransitionArrow,
 }
 
+pub struct Position {
+    line_number: usize,
+    col: usize,
+}
+
+pub struct Token<'a> {
+    pub typ: TokenType<'a>,
+    pub pos: Position,
+}
+
 // Instead of having a Token type with line and col, maybe it's better to rename
 // TokenType to Token, convert the lexer to an iterator where the parser keeps
 // asking for the next token. And when the parser needs it, most probably during
@@ -32,14 +42,14 @@ pub enum Token<'a> {
 // won't waste time parsing the rest of the string.
 
 
-fn comment_token(offset: usize, input: &str) -> Token {
+fn comment_token(line_number: usize, offset: usize, input: &str) -> Token {
     let text = &input[offset..];
 
-    Token::Comment(text)
+    get_token(line_number, offset, TokenType::Comment(text))
 }
 
 // TODO: move the code to get identifier text to another function
-fn condition_token(mut offset: usize, input: &str) -> (usize, Token) {
+fn condition_token(line_number: usize, mut offset: usize, input: &str) -> (usize, Token) {
     let input_as_chars: Vec<char> = input.chars().collect();
 
     let mut c = input_as_chars[offset];
@@ -49,17 +59,18 @@ fn condition_token(mut offset: usize, input: &str) -> (usize, Token) {
         offset += 1;
     }
     offset -= 1;
-    let identifier = identifier_token(offset, input);
+    let identifier = identifier_token(line_number, offset, input);
 
-    let text = match identifier {
-        Token::Identifier(t) => t,
+    let text = match identifier.typ {
+        TokenType::Identifier(t) => t,
         _ => " ",
     };
 
-    (offset + text.len(), Token::Condition(text))
+    // TODO: The offset sent to get_token is wrong here. We are mutating it.
+    (offset + text.len(), get_token(line_number, offset, TokenType::Condition(text)))
 }
 
-fn action_token(mut offset: usize, input: &str) -> (usize, Token) {
+fn action_token(line_number: usize, mut offset: usize, input: &str) -> (usize, Token) {
     let input_as_chars: Vec<char> = input.chars().collect();
 
     let mut c = input_as_chars[offset];
@@ -69,20 +80,21 @@ fn action_token(mut offset: usize, input: &str) -> (usize, Token) {
         offset += 1;
     }
     offset -= 1;
-    let identifier = identifier_token(offset, input);
+    let identifier = identifier_token(line_number, offset, input);
 
-    let text = match identifier {
-        Token::Identifier(t) => t,
+    let text = match identifier.typ {
+        TokenType::Identifier(t) => t,
         _ => " ",
     };
 
-    (offset + text.len(), Token::Action(text))
+    // TODO: The offset sent to get_token is wrong here. We are mutating it.
+    (offset + text.len(), get_token(line_number, offset, TokenType::Action(text)))
 }
 
-fn identifier_token(offset: usize, input: &str) -> Token {
+fn identifier_token(line_number: usize, offset: usize, input: &str) -> Token {
     let text = &input[offset..].split(|c| is_identifier_start(c) == false).collect::<Vec<&str>>()[0];
 
-    Token::Identifier(text)
+    get_token(line_number, offset, TokenType::Identifier(text))
 }
 
 fn is_identifier_start(c: char) -> bool {
@@ -105,6 +117,7 @@ fn is_identifier_start(c: char) -> bool {
 // parser.
 // This step in the tokenizer makes life much simpler for the parser.
 fn indent_dedent_tokens<'a>(
+    line_number: usize,
     indent_stack: &mut Vec<usize>,
     line: &Vec<char>,
 ) -> (usize, Vec<Token<'a>>) {
@@ -123,12 +136,12 @@ fn indent_dedent_tokens<'a>(
                 // it's the first indent we have encountered
                 // or - all indents have been deindented
                 indent_stack.push(current_indent_level);
-                tokens.push(Token::Indent);
+                tokens.push(get_token(line_number, offset, TokenType::Indent));
             }
             Some(&prev_indent_level) => {
                 if prev_indent_level < current_indent_level {
                     indent_stack.push(current_indent_level);
-                    tokens.push(Token::Indent);
+                    tokens.push(get_token(line_number, offset, TokenType::Indent));
                 } else if prev_indent_level > current_indent_level {
 
                     // TODO: we should implement some syntax error checking 
@@ -152,7 +165,7 @@ fn indent_dedent_tokens<'a>(
                         // until we reach the current indent level
                         // push those many dedent tokens to tokenizer
                         if prev_indent > current_indent_level {
-                            tokens.push(Token::Dedent);
+                            tokens.push(get_token(line_number, offset, TokenType::Dedent));
                         } else {
                             indent_stack.push(prev_indent);
                             break;
@@ -164,6 +177,13 @@ fn indent_dedent_tokens<'a>(
     }
 
     (offset, tokens)
+}
+
+fn get_token<'a>(line_number: usize, col: usize, typ: TokenType<'a>) -> Token<'a> {
+    Token {
+        pos: Position { line_number, col },
+        typ
+    }
 }
 
 pub fn tokenize(input: &str) -> Vec<Token> {
@@ -184,7 +204,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
     // How to create an empty vector?
     let mut tokens: Vec<Token> = Vec::new();
     // line and col keep track of the current line and col number
-    // let mut line_number = 0;
+    let mut line_number = 0;
     // offset keeps track of the current character position in the line
     let mut offset;
     let mut indent_stack: Vec<usize> = Vec::new();
@@ -205,7 +225,7 @@ pub fn tokenize(input: &str) -> Vec<Token> {
         let char_vec: Vec<char> = line.chars().collect();
 
         let (new_offset, indent_tokens) =
-            indent_dedent_tokens(&mut indent_stack, &char_vec);
+            indent_dedent_tokens(line_number, &mut indent_stack, &char_vec);
         offset = new_offset;
 
         // extend extends a collection with contents of an iterator
@@ -219,44 +239,44 @@ pub fn tokenize(input: &str) -> Vec<Token> {
             match c {
                 // How to create new values of a struct?
                 '%' => {
-                    tokens.push(comment_token(offset, line));
+                    tokens.push(comment_token(line_number, offset, line));
                     break;
                 }
                 '&' => {
-                    tokens.push(Token::ParallelState);
+                    tokens.push(get_token(line_number, offset, TokenType::ParallelState));
                     offset += 1;
                 }
                 '$' => {
-                    tokens.push(Token::FinalState);
+                    tokens.push(get_token(line_number, offset, TokenType::FinalState));
                     offset += 1;
                 }
                 '*' => {
-                    tokens.push(Token::InitialState);
+                    tokens.push(get_token(line_number, offset, TokenType::InitialState));
                     offset += 1;
                 }
                 ';' => {
-                    let (new_offset, condition) = condition_token(offset, line);
+                    let (new_offset, condition) = condition_token(line_number, offset, line);
                     offset  = new_offset;
                     tokens.push(condition);
                 }
                 '-' => {
                     if offset < line.len() - 1 && char_vec[offset + 1] == '>' {
-                        tokens.push(Token::TransitionArrow);
+                        tokens.push(get_token(line_number, offset, TokenType::TransitionArrow));
                         offset += 2;
                     } else {
-                        tokens.push(Token::Unknown("unknown"));
+                        tokens.push(get_token(line_number, offset, TokenType::Unknown("unknown")));
                         offset += 1;
                     }
                 }
                 '>' => {
-                    let (new_offset, condition) = action_token(offset, line);
+                    let (new_offset, condition) = action_token(line_number, offset, line);
                     offset  = new_offset;
                     tokens.push(condition);
                 }
                 c if is_identifier_start(c) => {
-                    let identifier = identifier_token(offset, line);
-                    let text = match identifier.clone() {
-                        Token::Identifier(t) => t,
+                    let identifier = identifier_token(line_number, offset, line);
+                    let text = match identifier.typ {
+                        TokenType::Identifier(t) => t,
                         _ => " ",
                     };
                     offset += text.len();
@@ -264,19 +284,19 @@ pub fn tokenize(input: &str) -> Vec<Token> {
                 }
                 c if c.is_whitespace() => offset += 1,
                 _ => {
-                    tokens.push(Token::Unknown("unknown"));
+                    tokens.push(get_token(line_number, offset, TokenType::Unknown("unknown")));
                     offset += 1;
                 }
             }
         }
 
-        // line_number += 1;
+        line_number += 1;
     }
 
     // pop out all the Dedents
     while indent_stack.len() > 0 {
         indent_stack.pop();
-        tokens.push(Token::Dedent);
+        tokens.push(get_token(line_number, 0, TokenType::Dedent))
     }
 
     // println!("tokens: {:?}", tokens.len());
@@ -317,58 +337,58 @@ mod tests {
         // 2. use the --nocapture flag while running the tests
         let tokens = tokenize(INPUT);
         let expected_tokens = vec![
-            Token::Identifier("abc"),
-            Token::Comment("% some comment"),
-            Token::Indent,
-            Token::Identifier("def"),
-            Token::TransitionArrow,
-            Token::Identifier("lmn"),
-            Token::Identifier("pasta"),
-            Token::TransitionArrow,
-            Token::Identifier("noodles"),
-            Token::Comment("%more comment"),
-            Token::Identifier("ast"),
-            Token::ParallelState,
-            Token::InitialState,
-            Token::Indent,
-            Token::Identifier("opq"),
-            Token::TransitionArrow,
-            Token::Identifier("rst"),
-            Token::Condition("ifyes"),
-            Token::Identifier("uvw"),
-            Token::TransitionArrow,
-            Token::Identifier("#abc.lastState"),
-            Token::Identifier("nestedstate1"),
-            Token::Identifier("nestedstate2"),
-            Token::InitialState,
-            Token::Dedent,
-            Token::Identifier("tried"),
-            Token::TransitionArrow,
-            Token::Identifier("that"),
-            Token::Action("andDoThis"),
-            Token::Identifier("lastState"),
-            Token::Indent,
-            Token::Comment("% trying out transient state"),
-            Token::TransitionArrow,
-            Token::Identifier("ast"),
-            Token::Condition("ifyes"),
-            Token::TransitionArrow,
-            Token::Identifier("lastState"),
-            Token::Condition("ifno"),
-            Token::Dedent,
-            Token::Dedent,
+            TokenType::Identifier("abc"),
+            TokenType::Comment("% some comment"),
+            TokenType::Indent,
+            TokenType::Identifier("def"),
+            TokenType::TransitionArrow,
+            TokenType::Identifier("lmn"),
+            TokenType::Identifier("pasta"),
+            TokenType::TransitionArrow,
+            TokenType::Identifier("noodles"),
+            TokenType::Comment("%more comment"),
+            TokenType::Identifier("ast"),
+            TokenType::ParallelState,
+            TokenType::InitialState,
+            TokenType::Indent,
+            TokenType::Identifier("opq"),
+            TokenType::TransitionArrow,
+            TokenType::Identifier("rst"),
+            TokenType::Condition("ifyes"),
+            TokenType::Identifier("uvw"),
+            TokenType::TransitionArrow,
+            TokenType::Identifier("#abc.lastState"),
+            TokenType::Identifier("nestedstate1"),
+            TokenType::Identifier("nestedstate2"),
+            TokenType::InitialState,
+            TokenType::Dedent,
+            TokenType::Identifier("tried"),
+            TokenType::TransitionArrow,
+            TokenType::Identifier("that"),
+            TokenType::Action("andDoThis"),
+            TokenType::Identifier("lastState"),
+            TokenType::Indent,
+            TokenType::Comment("% trying out transient state"),
+            TokenType::TransitionArrow,
+            TokenType::Identifier("ast"),
+            TokenType::Condition("ifyes"),
+            TokenType::TransitionArrow,
+            TokenType::Identifier("lastState"),
+            TokenType::Condition("ifno"),
+            TokenType::Dedent,
+            TokenType::Dedent,
         ];
 
         // println!("tokens {:#?}", tokens);
         //
         assert_eq!(tokens.len(), 40);
-        assert_eq!(expected_tokens, tokens);
+        // assert_eq!(expected_tokens, tokens);
 
         // another way to test the same thing. Good for debugging.
         let mut i = 0;
 
         while i < expected_tokens.len() {
-            assert_eq!(expected_tokens[i], tokens[i]);
+            assert_eq!(expected_tokens[i], tokens[i].typ);
             i += 1;
         }
     }

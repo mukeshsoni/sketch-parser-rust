@@ -17,3 +17,7 @@
  the whole text and get all tokens. It will do so lazily. In most cases when 
  there's an error in the initial parts of the string or in the middle, it 
  won't waste time parsing the rest of the string.
+8. Figured out that using tokens as iterator will make it very hard to implement
+   backtracking. And not having it as iterator will make it very hard to get the
+   line and column number of a token. Will have to go back to adding line and
+   column information in the token itself.

@@ -56,7 +56,7 @@ pub struct StateNode<'a> {
 //   }
 //
 //   fn condition(&self) {
-//      if let Token::Condition(text) == self.tokens.peek() {
+//      if let TokenType::Condition(text) == self.tokens.peek() {
 //          self.tokens.next();
 //          Some(text)
 //      }
@@ -69,7 +69,7 @@ pub struct StateNode<'a> {
 //   // This one does not use the token iterator. Just uses offset to keep track
 //   // of next token to consume. And consume updates the offset internally.
 //   fn condition(&self) {
-//      if let Token::Condition(text) == self.tokens[self.offset] {
+//      if let TokenType::Condition(text) == self.tokens[self.offset] {
 //          self.consume();
 //          Some(text)
 //      }
@@ -90,48 +90,95 @@ pub struct StateNode<'a> {
 // And only parser combinators worry about backtracking, which involves putting
 // the offset/index back to some previous position.
 
-fn identifier<'a>(tokens: &Vec<Token<'a>>, offset: usize) -> Option<&'a str> {
-    if let Token::Identifier(text) = tokens[offset] {
-       return Some(text);
+struct Parser<'a> {
+    offset: usize,
+    tokens: Vec<Token<'a>>,
+}
+
+impl<'a> Parser<'a> {
+    // Question: Should the input str be sent when creating a new parser or 
+    // during the call to parse? If we send it during Parser creation, we have
+    // to keep creating new parsers for every new parse.
+    // If we send it during parse call, what is even the point of having a 
+    // new method? We can directly call Parser::parse(input_str). Also, we
+    // won't have to store input_str in the struct any more. We need it to
+    // only get the tokens. The problem is, these methods are defined on Parser
+    // So we need an instance of Parser to call these methods. So either the
+    // user has to create an instance of the Parser themselves, or we provide a
+    // new method to do it for them
+    // Sigh. Let's go ahead with passing input_str to parse as argument for now
+    // At least we won't have to 
+    // 1. Store the input_str inside the parser
+    // 2. Won't have to create a new instance of Parser for every new parse
+    fn new() -> Parser<'a> {
+        Parser {
+            offset: 0,
+            tokens: vec![]
+        }
     }
 
-    None
-}
-
-fn parallel_state<'a>(tokens: &Vec<Token<'a>>, offset: usize) -> bool {
-    tokens[offset] == Token::ParallelState
-}
-
-// All our parsers will return an Option. If parsing was successful, return
-// Some<SomeData> else return None. We can probably write generic functions
-// which can handle these Option<T> return values. Functions like zero_or_more
-// one_or_more etc.
-fn state_parser<'a>(tokens: &Vec<Token<'a>>, offset: usize) -> Option<StateNode<'a>> {
-    let id = identifier(tokens, offset).expect("Expected a state name");
-
-    println!("id {:?}", id);
-    Some(StateNode {
-        id: "1",
-        typ: StateType::AtomicState,
-        initial: Some("abc"),
-        is_initial: false,
-        on: HashMap::new(),
-        states: HashMap::new()
-    })
-}
-
-// Our parser returns a Result type. Which means it returns an error if the 
-// parsing fails. 
-// TODO: Define a custom error struct
-pub fn parse<'a>(input: &'a str) -> Result<StateNode<'a>, &'a str> {
-    let tokens = tokenize(input);
-
-    if let Some(ast) = state_parser(&tokens, 0) {
-        return Ok(ast);
+    fn consume(&mut self) {
+        self.offset += 1;
     }
 
-    Err("Error parsing string")
+    fn identifier(&mut self) -> Option<&'a str> {
+        if let TokenType::Identifier(text) = self.tokens[self.offset].typ {
+            self.consume();
+            return Some(text);
+        }
+
+        None
+    }
+
+    fn parallel_state(&mut self) -> Option<bool> {
+        if self.tokens[self.offset].typ == TokenType::ParallelState {
+            self.consume();
+            return Some(true);
+        }
+
+        None
+    }
+
+    // All our parsers will return an Option. If parsing was successful, return
+    // Some<SomeData> else return None. We can probably write generic functions
+    // which can handle these Option<T> return values. Functions like zero_or_more
+    // one_or_more etc.
+    // We can use the question mark (?) operator
+    // self.identifier()?;
+    fn state_parser(&mut self) -> Option<StateNode<'a>> {
+        // we have to find a better way of passing on the None values from 
+        // one parser to another. Panicing will not do.
+        let id = self.identifier()?;
+
+        println!("id {:?}", id);
+        Some(StateNode {
+            id: "1",
+            typ: StateType::AtomicState,
+            initial: Some("abc"),
+            is_initial: false,
+            on: HashMap::new(),
+            states: HashMap::new()
+        })
+    }
+
+    // Our parser returns a Result type. Which means it returns an error if the 
+    // parsing fails. 
+    // TODO: Define a custom error struct
+    pub fn parse(&mut self, input_str: &'a str) -> Result<StateNode<'a>, &'a str> {
+        self.offset = 0;
+        self.tokens = tokenize(input_str);
+
+        if let Some(ast) = self.state_parser() {
+            return Ok(ast);
+        }
+
+        Err("Error parsing string")
+    }
 }
+
+
+
+
 
 #[cfg(test)]
 mod tests {
@@ -154,7 +201,8 @@ mod tests {
 
     #[test]
     fn test_parser() {
-        let ast = parse(INPUT).unwrap();
+        let mut parser = Parser::new();
+        let ast = parser.parse(INPUT).unwrap();
 
         let expected_ast: StateNode = StateNode {
             id: "1",
