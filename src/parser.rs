@@ -110,7 +110,7 @@ enum TransitionOrState<'a> {
 // And only parser combinators worry about backtracking, which involves putting
 // the offset/index back to some previous position.
 
-struct Parser<'a> {
+pub struct Parser<'a> {
     tokens: Vec<Token<'a>>,
 }
 
@@ -124,6 +124,8 @@ struct Parser<'a> {
 // The return type sends the offset as a return value in both success and fail
 // case since both are actually success for zero_or_one. No match is also what
 // this parser is supposed to treat as a success.
+// TODO: Why can't it return Option<(offset, T)> like all other parsers do?
+// Then we would also have a unified api for all parser functions.
 fn zero_or_one<T, F>(offset: usize, f: F) -> (usize, Option<T>)
 where
     F: Fn(usize) -> Option<(usize, T)>,
@@ -158,28 +160,16 @@ where
     }
 }
 
-fn one_or_another<T, F>(offset: usize, f1: F, f2: F) -> Option<T> 
-    where
-        F: Fn(usize) -> Option<T>
-{
-    if let Some(x) = f1(offset) {
-        return Some(x);
-    }
-
-    f2(offset)
-}
-
-
 fn get_state_type(is_parallel_state: bool, is_final_state: bool, sub_states_count: usize) -> StateType {
-    if(is_parallel_state) {
+    if is_parallel_state {
         return StateType::ParallelState;
     }
 
-    if(is_final_state) {
+    if is_final_state {
         return StateType::FinalState;
     }
 
-    if(sub_states_count > 0) {
+    if sub_states_count > 0 {
         return StateType::CompoundState;
     }
 
@@ -188,7 +178,7 @@ fn get_state_type(is_parallel_state: bool, is_final_state: bool, sub_states_coun
 }
 
 fn get_initial_state<'a>(sub_states: &Vec<(&'a str, StateNode<'a>)>) -> Option<&'a str> {
-    if(sub_states.len() == 0) {
+    if sub_states.len() == 0 {
         return None;
     }
 
@@ -218,12 +208,12 @@ impl<'a> Parser<'a> {
     // At least we won't have to
     // 1. Store the input_str inside the parser
     // 2. Won't have to create a new instance of Parser for every new parse
-    fn new() -> Parser<'a> {
+    pub fn new() -> Parser<'a> {
         Parser { tokens: vec![] }
     }
 
     fn get_token_at(&self, offset: usize) -> Option<&Token<'a>> {
-        if(offset < self.tokens.len()) {
+        if offset < self.tokens.len() {
             return Some(&self.tokens[offset]);
         }
 
@@ -317,13 +307,13 @@ impl<'a> Parser<'a> {
     }
 
     fn transition(&self, offset: usize) -> Option<(usize, TransitionNode<'a>)> {
-        let mut new_offset = offset;
+        let new_offset;
         let (offset, event_option) = zero_or_one(offset, |offset| self.identifier(offset));
         let mut event = "";
         let (offset, _) = self.transition_arrow(offset)?;
         let (offset, target) = self.identifier(offset)?;
 
-        let mut condition_name = None;
+        let condition_name;
         let mut action_names = None;
 
         if let Some(en) = event_option {
