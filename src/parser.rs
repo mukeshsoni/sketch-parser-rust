@@ -13,7 +13,7 @@ enum StateType {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TransitionNode<'a> {
-    event_name: &'a str,
+    event: &'a str,
     target: &'a str,
     cond: Option<&'a str>,
     actions: Option<Vec<&'a str>>,
@@ -187,6 +187,19 @@ fn get_state_type(is_parallel_state: bool, is_final_state: bool, sub_states_coun
     return StateType::AtomicState;
 }
 
+fn get_initial_state<'a>(sub_states: &Vec<(&'a str, StateNode<'a>)>) -> Option<&'a str> {
+    if(sub_states.len() == 0) {
+        return None;
+    }
+
+    if let Some((initial_sub_state, _)) = sub_states.iter().find(|(_, s)| s.is_initial == true) {
+        return Some(initial_sub_state);
+    } else {
+        let (initial_sub_state, _) = sub_states[0];
+        return Some(initial_sub_state);
+    }
+}
+
 // all parsers return Option<(offset, returnValueForThatParser)>
 // all parser combinators return (offset, Option<returnValueForParser or Vec<returnValueForParser>>)
 
@@ -243,23 +256,22 @@ impl<'a> Parser<'a> {
 
     fn transition(&self, offset: usize) -> Option<(usize, TransitionNode<'a>)> {
         let mut new_offset = offset;
-        let (offset, event_name_option) = zero_or_one(offset, |offset| self.identifier(offset));
-        let mut event_name = "";
+        let (offset, event_option) = zero_or_one(offset, |offset| self.identifier(offset));
+        let mut event = "";
         let (offset, _) = self.transition_arrow(offset)?;
         let (offset, target) = self.identifier(offset)?;
 
         let mut condition_name = None;
         let mut action_names = None;
 
-        if let Some(en) = event_name_option {
-            event_name = en;
+        if let Some(en) = event_option {
+            event = en;
             let (offset, cn) = zero_or_one(offset, |offset| self.condition(offset));
             condition_name = cn;
             let (offset, ans) = zero_or_more(offset, |offset| self.action(offset));
             action_names = ans;
             new_offset = offset;
         } else {
-            println!("Got transient transition {:#?}", self.tokens[offset]);
             // if the event name is not given, we definitely want the condition
             // It means it's a transient event and needs to be accompanied by
             // a condition
@@ -275,7 +287,7 @@ impl<'a> Parser<'a> {
         }
 
         let transition_node = TransitionNode {
-            event_name,
+            event,
             target,
             cond: condition_name,
             actions: action_names,
@@ -408,7 +420,7 @@ impl<'a> Parser<'a> {
         Some((offset, StateNode {
             id,
             typ: get_state_type(is_parallel_state, is_final_state, sub_states.len()),
-            initial: None,
+            initial: get_initial_state(&sub_states),
             is_initial: is_initial_state,
             // we can convert a vector to hashmap by having the vector as a
             // vector of tuples of (key, val)
@@ -469,23 +481,23 @@ mod tests {
         let expected_ast: StateNode = StateNode {
             id: "abc",
             typ: StateType::CompoundState,
-            initial: None,
+            initial: Some("ast"),
             is_initial: false,
             on: vec![
                 TransitionNode {
-                    event_name: "def",
+                    event: "def",
                     target: "lmn",
                     cond: None,
                     actions: None
                 },
                 TransitionNode {
-                    event_name: "pasta",
+                    event: "pasta",
                     target: "noodles",
                     cond: None,
                     actions: None
                 },
                 TransitionNode {
-                    event_name: "tried",
+                    event: "tried",
                     target: "that",
                     cond: None,
                     actions: Some(vec!["andDoThis"])
@@ -501,13 +513,13 @@ mod tests {
                         is_initial: false,
                         on: vec![
                             TransitionNode {
-                                event_name: "",
+                                event: "",
                                 target: "ast",
                                 cond: Some("ifyes"),
                                 actions: None
                             },
                             TransitionNode {
-                                event_name: "",
+                                event: "",
                                 target: "lastState",
                                 cond: Some("ifno"),
                                 actions: None
@@ -521,17 +533,17 @@ mod tests {
                     StateNode {
                         id: "ast",
                         typ: StateType::ParallelState,
-                        initial: None,
+                        initial: Some("nestedstate2"),
                         is_initial: true,
                         on: vec![
                             TransitionNode {
-                                event_name: "opq",
+                                event: "opq",
                                 target: "rst",
                                 cond: Some("ifyes"),
                                 actions: None,
                             },
                             TransitionNode {
-                                event_name: "uvw",
+                                event: "uvw",
                                 target: "#abc.lastState",
                                 cond: None,
                                 actions: None,
@@ -572,13 +584,13 @@ mod tests {
                         is_initial: false,
                         on: vec![
                             TransitionNode {
-                                event_name: "",
+                                event: "",
                                 target: "ast",
                                 cond: Some("ifyes"),
                                 actions: None,
                             },
                             TransitionNode {
-                                event_name: "",
+                                event: "",
                                 target: "lastState",
                                 cond: Some("ifno"),
                                 actions: None,

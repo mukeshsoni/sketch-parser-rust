@@ -22,3 +22,5 @@
    line and column number of a token. Will have to go back to adding line and
    column information in the token itself.
 9. [ ] Only thing left is to get hold of initial state for state with sub states.
+10. [ ] Work on error handling for syntax errors and semantic. Try showing
+    relevant and pin pointed errors.
