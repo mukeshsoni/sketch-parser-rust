@@ -222,36 +222,98 @@ impl<'a> Parser<'a> {
         Parser { tokens: vec![] }
     }
 
+    fn get_token_at(&self, offset: usize) -> Option<&Token<'a>> {
+        if(offset < self.tokens.len()) {
+            return Some(&self.tokens[offset]);
+        }
+
+        None
+    }
+
+    // This parser works for all parsers which want to compare token to 
+    // something and return T if the comparison is successful
+    // It helps take care of some repeating things
+    // 1. use get_token_at and pull value out of the Option returned by that method
+    // 2. Wrap the values in Option enum
+    fn match_parser<T, F, F2>(&self, offset: usize, pred: F, get_val: F2) -> Option<(usize, T)> 
+        where
+            F: Fn(&Token<'a>) -> bool,
+            F2: Fn(&Token<'a>) -> T
+    {
+        if let Some(token) = self.get_token_at(offset) {
+            // TODO: If i can change below if to `if let`, then i can pass 
+            // whatever was found inside the enum which was matched and pass
+            // it on to get_val. Otherwise, get_val would again have to match
+            // token.typ to enum and send back and Option
+            // Maybe we can have get_val return an Option and always do
+            // get_val(token).unwrap()
+            if pred(token) {
+                return Some((offset + 1, get_val(token)));
+            }
+        }
+
+        None
+    }
+
     fn identifier(&self, offset: usize) -> Option<(usize, &'a str)> {
-        if let TokenType::Identifier(text) = self.tokens[offset].typ {
-            return Some((offset + 1, text));
+        if let Some(token) = self.get_token_at(offset) {
+            if let TokenType::Identifier(text) = token.typ {
+                return Some((offset + 1, text));
+            }
         }
 
         None
     }
 
     fn transition_arrow(&self, offset: usize) -> Option<(usize, bool)> {
-        if let TokenType::TransitionArrow = self.tokens[offset].typ {
-            return Some((offset + 1, true))
+        if let Some(token) = self.get_token_at(offset) {
+            if let TokenType::TransitionArrow = token.typ {
+                return Some((offset + 1, true))
+            }
         }
 
         None
     }
     
     fn condition(&self, offset: usize) -> Option<(usize, &'a str)> {
-        if let TokenType::Condition(cond_str) = self.tokens[offset].typ  {
-            return Some((offset + 1, cond_str));
+        if let Some(token) = self.get_token_at(offset) {
+            if let TokenType::Condition(cond_str) = token.typ  {
+                return Some((offset + 1, cond_str));
+            }
         }
 
         None
     }
 
     fn action(&self, offset: usize) -> Option<(usize, &'a str)> {
-        if let TokenType::Action(cond_str) = self.tokens[offset].typ  {
-            return Some((offset + 1, cond_str));
+        if let Some(token) = self.get_token_at(offset) {
+            if let TokenType::Action(cond_str) = token.typ  {
+                return Some((offset + 1, cond_str));
+            }
         }
 
         None
+    }
+
+    fn parallel_state(&self, offset: usize) -> Option<(usize, bool)> {
+        self.match_parser(offset, |token| token.typ == TokenType::ParallelState, |_| true)
+    }
+
+    fn final_state(&self, offset: usize) -> Option<(usize, bool)> {
+        self.match_parser(offset, |token| token.typ == TokenType::FinalState, |_| true)
+    }
+
+    fn initial_state(&self, offset: usize) -> Option<(usize, bool)> {
+        self.match_parser(offset, |token| token.typ == TokenType::InitialState, |_| true)
+    }
+
+    fn indent(&self, offset: usize) -> Option<(usize, bool)> {
+        self.match_parser(offset, |token| token.typ == TokenType::Indent, |_| true)
+    }
+
+
+    fn dedent(&self, offset: usize) -> Option<(usize, bool)> {
+        self.match_parser(offset, |token: &Token<'a>| token.typ == TokenType::Dedent, |_| true)
     }
 
     fn transition(&self, offset: usize) -> Option<(usize, TransitionNode<'a>)> {
@@ -296,55 +358,7 @@ impl<'a> Parser<'a> {
         Some((new_offset, transition_node))
     }
 
-    fn parallel_state(&self, offset: usize) -> Option<(usize, bool)> {
-        if self.tokens[offset].typ == TokenType::ParallelState {
-            return Some((offset + 1, true));
-        }
 
-        None
-    }
-
-    fn final_state(&self, offset: usize) -> Option<(usize, bool)> {
-        if self.tokens[offset].typ == TokenType::FinalState {
-            return Some((offset + 1, true));
-        }
-
-        None
-    }
-
-    fn initial_state(&self, offset: usize) -> Option<(usize, bool)> {
-        if self.tokens[offset].typ == TokenType::InitialState {
-            return Some((offset + 1, true));
-        }
-
-        None
-    }
-
-    fn indent(&self, offset: usize) -> Option<(usize, bool)> {
-        if self.tokens[offset].typ == TokenType::Indent {
-            return Some((offset + 1, true));
-        }
-
-        None
-    }
-
-    fn dedent(&self, offset: usize) -> Option<(usize, bool)> {
-        if let Some(token) = self.get_token_at(offset) {
-            if token.typ == TokenType::Dedent {
-                return Some((offset + 1, true));
-            }
-        }
-
-        None
-    }
-
-    fn get_token_at(&self, offset: usize) -> Option<&Token<'a>> {
-        if(offset < self.tokens.len()) {
-            return Some(&self.tokens[offset]);
-        }
-
-        None
-    }
     // All our parsers will return an Option. If parsing was successful, return
     // Some<SomeData> else return None. We can probably write generic functions
     // which can handle these Option<T> return values. Functions like zero_or_more
@@ -446,7 +460,7 @@ impl<'a> Parser<'a> {
             .collect();
 
         if let Some((_, ast)) = self.state_parser(0) {
-            println!("ast {:#?}", ast);
+            // println!("ast {:#?}", ast);
             return Ok(ast);
         }
 
